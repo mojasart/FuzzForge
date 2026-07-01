@@ -209,14 +209,48 @@ Use ele quando trocar de alvo ou quando quiser remover lixo antigo da tela.
 
 A extensao ja filtra por padrao varias coisas que normalmente poluem a lista, como:
 
-* assets estaticos
 * arquivos `.css`, `.js`, `.png`, `.ico`
 * paths de tracking
 * parametros `utm_*`
 * parametros de Google Ads/Analytics
 * hosts comuns de tracking, como Google Analytics, Google Tag Manager e DoubleClick
 
-Esses filtros rodam por padrao e nao aparecem como opcao na interface.
+Esses filtros rodam por padrao, mas podem ser editados pela interface.
+
+Na parte de configuracao existem abas de blacklist:
+
+* `Hosts`
+* `Segmentos`
+* `Arquivos`
+* `Extensoes`
+* `Parametros`
+
+Se voce quiser deixar de filtrar alguma coisa, remova da blacklist correspondente.
+
+Exemplo:
+
+Se quiser que arquivos `.7z` sejam considerados paths validos, remova:
+
+```text
+.7z
+```
+
+da aba `Extensoes`.
+
+Se quiser deixar `/wp-content` aparecer, remova:
+
+```text
+wp-content
+```
+
+da aba `Segmentos`.
+
+O botao `Restaurar blacklist` volta os filtros para o padrao da extensao.
+
+Para evitar poluicao, prefira definir o host:
+
+* pelo Burp Target Scope; ou
+* pela allowlist manual da extensao.
 
 ---
 
