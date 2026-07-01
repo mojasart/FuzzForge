@@ -1,11 +1,218 @@
 from burp import IBurpExtender, ITab, IHttpListener
 from javax.swing import JPanel, JCheckBox, JTextArea, JScrollPane, JLabel, JButton
-from javax.swing import JFileChooser, JOptionPane
+from javax.swing import JFileChooser, JOptionPane, JTabbedPane
 from javax.swing import BoxLayout, BorderFactory
 from java.awt import BorderLayout
 from java.net import URLDecoder
 from java.io import File
 import re
+
+
+DEFAULT_NOISY_HOSTS = """google-analytics.com
+googletagmanager.com
+googleadservices.com
+doubleclick.net
+google.com
+google.com.br
+gstatic.com
+googleapis.com
+facebook.com
+facebook.net
+hotjar.com
+segment.com"""
+
+DEFAULT_NOISY_SEGMENTS = """cdn-cgi
+rum
+cldr
+globalize
+highcharts
+layout
+pace
+pivotgridfeatures
+orgchart
+jquery-notifications
+default
+collect
+ads
+ga-audiences
+ccm
+rmkt
+pagead
+viewthroughconversion
+1p-user-list
+wp-content
+wp-includes
+wp-admin
+plugins
+plugin
+themes
+theme
+assets
+asset
+css
+js
+img
+image
+images
+fonts
+font
+webfonts
+uploads
+upload
+cookie-notice
+npm
+node_modules
+blocks
+block
+paragraph
+fontawesome
+fontawesome-free
+@*
+*fontawesome*"""
+
+DEFAULT_NOISY_FILES = """favicon.ico
+robots.txt
+sitemap.xml
+warmup.html
+site.webmanifest
+manifest.json
+browserconfig.xml"""
+
+DEFAULT_NOISY_EXTENSIONS = """.css
+.js
+.map
+.png
+.jpg
+.jpeg
+.gif
+.svg
+.webp
+.ico
+.woff
+.woff2
+.ttf
+.eot
+.mp4
+.mp3
+.pdf
+.zip
+.rar
+.7z
+.webmanifest
+.xml
+.json"""
+
+DEFAULT_NOISY_PARAMS = """v
+_
+t
+ts
+cb
+cache
+cachebuster
+utm_*
+ep.*
+gap.*
+gclid
+gbraid
+wbraid
+fbclid
+msclkid
+gad_source
+gad_campaignid
+gad_adgroupid
+gad_creativeid
+gad_network
+od
+tid
+gtm
+_p
+_gaz
+gcd
+npa
+dma
+ecid
+_eu
+are
+cid
+frm
+pscdl
+rcb
+sr
+uaa
+uab
+uafvl
+uam
+uamb
+uap
+uapv
+uaw
+ul
+gaf
+_s
+tag_exp
+sid
+sct
+seg
+dl
+dr
+dt
+en
+_et
+tfd
+slf_rd
+_r
+aip
+z
+family
+display
+id
+cx
+ae
+auid
+scrsrc
+rnd
+gclaw
+navt
+apve
+apvf
+apvc
+tft
+fmt
+random
+cv
+fst
+bg
+guid
+async
+u_w
+u_h
+url
+gclaw_src
+tiba
+hn
+data
+ept
+gcp
+tids
+rfmt
+ec_mode
+pid
+seq
+exp
+tdp
+rtg
+slo
+hlo
+lst
+pcid
+bt
+ct
+is_vtc
+rmt_tld
+ipr
+mde
+fin
+is_td"""
 
 
 class BurpExtender(IBurpExtender, ITab, IHttpListener):
@@ -36,16 +243,51 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         buttons = JPanel()
         buttons.add(JButton("Exportar txt", actionPerformed=self.export_txt))
         buttons.add(JButton("Limpar", actionPerformed=self.clear_results))
+        buttons.add(JButton("Restaurar blacklist", actionPerformed=self.restore_blacklists))
         options.add(buttons)
 
-        allow_panel = JPanel(BorderLayout())
-        allow_panel.setBorder(BorderFactory.createTitledBorder("Manual hosts allowlist, opcional"))
-        self.host_allowlist = JTextArea(4, 40)
-        allow_panel.add(JScrollPane(self.host_allowlist), BorderLayout.CENTER)
-        allow_panel.add(JLabel("Opcional. Um host por linha."), BorderLayout.SOUTH)
+        config_tabs = JTabbedPane()
+
+        allow_panel, self.host_allowlist = self.text_panel(
+            "Manual hosts allowlist, opcional",
+            "",
+            "Opcional. Um host por linha.",
+        )
+        noisy_hosts_panel, self.noisy_hosts_area = self.text_panel(
+            "Blacklist hosts",
+            DEFAULT_NOISY_HOSTS,
+            "Um host por linha. Subdominios tambem serao filtrados.",
+        )
+        noisy_segments_panel, self.noisy_segments_area = self.text_panel(
+            "Blacklist segmentos",
+            DEFAULT_NOISY_SEGMENTS,
+            "Um segmento por linha. Aceita @* e *texto*.",
+        )
+        noisy_files_panel, self.noisy_files_area = self.text_panel(
+            "Blacklist arquivos",
+            DEFAULT_NOISY_FILES,
+            "Um nome de arquivo por linha.",
+        )
+        noisy_extensions_panel, self.noisy_extensions_area = self.text_panel(
+            "Blacklist extensoes",
+            DEFAULT_NOISY_EXTENSIONS,
+            "Uma extensao por linha. Ex: .js, .png, .7z",
+        )
+        noisy_params_panel, self.noisy_params_area = self.text_panel(
+            "Blacklist parametros",
+            DEFAULT_NOISY_PARAMS,
+            "Um parametro por linha. Aceita prefixo com *: utm_*",
+        )
+
+        config_tabs.addTab("Allowlist", allow_panel)
+        config_tabs.addTab("Hosts", noisy_hosts_panel)
+        config_tabs.addTab("Segmentos", noisy_segments_panel)
+        config_tabs.addTab("Arquivos", noisy_files_panel)
+        config_tabs.addTab("Extensoes", noisy_extensions_panel)
+        config_tabs.addTab("Parametros", noisy_params_panel)
 
         top.add(options, BorderLayout.WEST)
-        top.add(allow_panel, BorderLayout.CENTER)
+        top.add(config_tabs, BorderLayout.CENTER)
 
         self.preview = JTextArea()
         self.preview.setEditable(False)
@@ -67,6 +309,29 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def getUiComponent(self):
         return self.panel
 
+    def text_panel(self, title, default_text, footer):
+        panel = JPanel(BorderLayout())
+        panel.setBorder(BorderFactory.createTitledBorder(title))
+        area = JTextArea(default_text, 5, 40)
+        panel.add(JScrollPane(area), BorderLayout.CENTER)
+        panel.add(JLabel(footer), BorderLayout.SOUTH)
+        return panel, area
+
+    def restore_blacklists(self, event):
+        self.noisy_hosts_area.setText(DEFAULT_NOISY_HOSTS)
+        self.noisy_segments_area.setText(DEFAULT_NOISY_SEGMENTS)
+        self.noisy_files_area.setText(DEFAULT_NOISY_FILES)
+        self.noisy_extensions_area.setText(DEFAULT_NOISY_EXTENSIONS)
+        self.noisy_params_area.setText(DEFAULT_NOISY_PARAMS)
+
+    def text_items(self, area):
+        items = []
+        for line in area.getText().splitlines():
+            item = line.strip().lower()
+            if item and not item.startswith("#"):
+                items.append(item)
+        return items
+
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         if toolFlag not in [
             self.callbacks.TOOL_PROXY,
@@ -78,9 +343,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         request_info = self.helpers.analyzeRequest(messageInfo)
         url = request_info.getUrl()
 
-        if self.only_scope.isSelected() and not self.callbacks.isInScope(url):
+        if self.only_scope.isSelected() and not self.callbacks.isInScope(url) and not self.host_in_allowlist(url):
             return
-        if not self.host_allowed(url):
+        if self.has_allowlist() and not self.host_in_allowlist(url):
             return
         if self.is_noisy_host(url):
             return
@@ -162,6 +427,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if not raw:
             return True
 
+        return self.host_in_allowlist(url)
+
+    def has_allowlist(self):
+        return bool(self.host_allowlist.getText().strip())
+
+    def host_in_allowlist(self, url):
+        raw = self.host_allowlist.getText().strip()
+        if not raw:
+            return False
+
         host = (url.getHost() or "").lower()
         allowed = []
         for line in raw.splitlines():
@@ -178,22 +453,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def is_noisy_host(self, url):
         host = (url.getHost() or "").lower()
 
-        noisy_hosts = [
-            "google-analytics.com",
-            "googletagmanager.com",
-            "googleadservices.com",
-            "doubleclick.net",
-            "google.com",
-            "google.com.br",
-            "gstatic.com",
-            "googleapis.com",
-            "facebook.com",
-            "facebook.net",
-            "hotjar.com",
-            "segment.com",
-        ]
-
-        for noisy_host in noisy_hosts:
+        for noisy_host in self.text_items(self.noisy_hosts_area):
             if host == noisy_host or host.endswith("." + noisy_host):
                 return True
 
@@ -202,15 +462,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def collect_from_url(self, url, paths, full_paths, params):
         raw_path = url.getPath() or ""
         raw_query = url.getQuery() or ""
+        path_segments = self.clean_path_segments(raw_path)
 
-        if self.is_noisy_path(raw_path):
-            raw_path = ""
+        if self.is_noisy_path_segments(path_segments):
+            path_segments = []
 
-        full_path = self.clean_full_path(raw_path)
+        full_path = self.clean_full_path_from_segments(path_segments)
         if full_path:
             full_paths.append(full_path)
 
-        for segment in raw_path.split("/"):
+        for segment in path_segments:
             cleaned = self.clean_path_segment(segment)
             if cleaned:
                 paths.append(cleaned)
@@ -256,6 +517,32 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         return value
 
     def clean_full_path(self, value):
+        segments = self.clean_path_segments(value)
+
+        if not segments:
+            return None
+
+        if self.is_noisy_path_segments(segments):
+            return None
+
+        return self.clean_full_path_from_segments(segments)
+
+    def clean_full_path_from_segments(self, segments):
+        cleaned_segments = []
+        for segment in segments:
+            cleaned = self.clean_path_segment(segment)
+            if cleaned:
+                cleaned_segments.append(cleaned)
+
+        if not cleaned_segments:
+            return None
+
+        if len(cleaned_segments) < 2:
+            return None
+
+        return "/".join(cleaned_segments)
+
+    def clean_path_segments(self, value):
         value = self.decode(value)
         value = value.strip()
         value = value.split("?", 1)[0]
@@ -263,24 +550,18 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         value = value.strip("/")
 
         if not value:
-            return None
+            return []
 
-        if self.is_noisy_path(value):
-            return None
+        raw_segments = [segment for segment in value.split("/") if segment.strip()]
+        if not raw_segments:
+            return []
 
-        segments = []
-        for segment in value.split("/"):
-            cleaned = self.clean_path_segment(segment)
-            if cleaned:
-                segments.append(cleaned)
+        # Se a URL termina em arquivo, remove somente o arquivo e preserva
+        # o diretorio onde ele foi encontrado.
+        if self.is_file_segment(raw_segments[-1]):
+            raw_segments = raw_segments[:-1]
 
-        if not segments:
-            return None
-
-        if len(segments) < 2:
-            return None
-
-        return "/".join(segments)
+        return raw_segments
 
     def clean_param(self, value):
         value = self.decode(value)
@@ -296,44 +577,43 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if not parts:
             return True
 
+        return self.is_noisy_path_segments(parts)
+
+    def is_noisy_path_segments(self, parts):
         for part in parts:
             if self.is_noisy_segment(part):
                 return True
 
         return False
 
+    def is_file_segment(self, value):
+        lower = value.lower().strip()
+        for ext in self.text_items(self.noisy_extensions_area):
+            if lower.endswith(ext):
+                return True
+        return False
+
     def is_noisy_segment(self, value):
         lower = value.lower().strip()
 
-        static_dirs = set([
-            "assets", "asset", "static", "public", "dist", "build",
-            "css", "js", "img", "image", "images", "font", "fonts",
-            "skin", "skins", "theme", "themes", "plugins", "plugin",
-            "scripts", "script", "vendor", "vendors", "lib", "libs",
-            "modules", "module", "logos", "logo", "cdn-cgi", "rum",
-            "cldr", "globalize", "highcharts", "layout", "pace",
-            "pivotgridfeatures", "orgchart", "jquery-notifications",
-            "default", "collect", "ads", "ga-audiences", "ccm", "rmkt",
-            "pagead", "viewthroughconversion", "1p-user-list",
-        ])
-        if lower in static_dirs:
+        for pattern in self.text_items(self.noisy_segments_area):
+            if self.matches_pattern(lower, pattern):
+                return True
+
+        for filename in self.text_items(self.noisy_files_area):
+            if lower == filename:
+                return True
+
+        for ext in self.text_items(self.noisy_extensions_area):
+            if lower.endswith(ext):
+                return True
+
+        if self.is_generated_value(lower):
             return True
 
-        static_files = set([
-            "favicon.ico", "robots.txt", "sitemap.xml", "warmup.html",
-            "site.webmanifest", "manifest.json", "browserconfig.xml",
-        ])
-        if lower in static_files:
-            return True
+        return False
 
-        static_exts = (
-            ".css", ".js", ".map", ".png", ".jpg", ".jpeg", ".gif",
-            ".svg", ".webp", ".ico", ".woff", ".woff2", ".ttf", ".eot",
-            ".mp4", ".mp3", ".pdf", ".zip", ".rar", ".7z",
-        )
-        if lower.endswith(static_exts):
-            return True
-
+    def is_generated_value(self, lower):
         # Cache busting/hash de asset, exemplo:
         # v4513226cdae34746b4dedf0b4dfa099e1781791509496
         if re.match(r"^[a-f0-9]{16,}$", lower):
@@ -365,6 +645,15 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
         return False
 
+    def matches_pattern(self, value, pattern):
+        if pattern.startswith("*") and pattern.endswith("*") and len(pattern) > 2:
+            return pattern[1:-1] in value
+        if pattern.startswith("*") and len(pattern) > 1:
+            return value.endswith(pattern[1:])
+        if pattern.endswith("*") and len(pattern) > 1:
+            return value.startswith(pattern[:-1])
+        return value == pattern
+
     def is_noisy_js_candidate(self, value):
         lower = value.lower().strip()
 
@@ -392,33 +681,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
     def is_noisy_param(self, value):
         lower = value.lower().strip()
-        noisy_params = set([
-            "v", "_", "t", "ts", "cb", "cache", "cachebuster",
-            "gclid", "gbraid", "wbraid", "fbclid", "msclkid",
-            "gad_source", "gad_campaignid", "gad_adgroupid",
-            "gad_creativeid", "gad_network",
-            "od", "tid", "gtm", "_p", "_gaz", "gcd", "npa", "dma",
-            "ecid", "_eu", "are", "cid", "frm", "pscdl", "rcb",
-            "sr", "uaa", "uab", "uafvl", "uam", "uamb", "uap",
-            "uapv", "uaw", "ul", "gaf", "_s", "tag_exp", "sid",
-            "sct", "seg", "dl", "dr", "dt", "en", "_et", "tfd",
-            "slf_rd", "_r", "aip", "z", "family", "display", "id",
-            "cx", "ae", "auid", "scrsrc", "rnd", "gclaw", "navt",
-            "apve", "apvf", "apvc", "tft", "fmt", "random", "cv",
-            "fst", "bg", "guid", "async", "u_w", "u_h", "url",
-            "gclaw_src", "tiba", "hn", "data", "ept", "gcp",
-            "tids", "rfmt", "ec_mode", "pid", "seq", "exp", "tdp",
-            "rtg", "slo", "hlo", "lst", "pcid", "bt", "ct",
-            "is_vtc", "rmt_tld", "ipr", "mde", "fin", "is_td",
-        ])
-        if lower in noisy_params:
-            return True
-        if lower.startswith("utm_"):
-            return True
-        if lower.startswith("ep."):
-            return True
-        if lower.startswith("gap."):
-            return True
+        for pattern in self.text_items(self.noisy_params_area):
+            if self.matches_pattern(lower, pattern):
+                return True
         return False
 
     def decode(self, value):
