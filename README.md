@@ -197,6 +197,39 @@ tipo
 
 ---
 
+## Exportar JSON
+
+O botao `Exportar JSON` pede uma pasta e salva um arquivo:
+
+```text
+wordlists.json
+```
+
+Esse arquivo junta tudo que a extensao coletou em um unico JSON estruturado, com as mesmas listas do preview:
+
+```json
+{
+  "full_paths": [
+    "setor/verejo"
+  ],
+  "paths": [
+    "setor",
+    "verejo"
+  ],
+  "parameters": [
+    "ver",
+    "id",
+    "tipo"
+  ]
+}
+```
+
+Use esse formato quando quiser importar os resultados em outra ferramenta ou script, em vez de ler os `.txt` linha por linha.
+
+O `Exportar JSON` nao substitui o `Exportar txt`: sao dois botoes independentes, entao voce pode gerar os dois formatos a partir da mesma coleta.
+
+---
+
 ## Limpar
 
 O botao `Limpar` apaga tudo que foi coletado na aba atual.
