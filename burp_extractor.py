@@ -6,6 +6,7 @@ from java.awt import BorderLayout
 from java.net import URLDecoder
 from java.io import File
 import re
+import json
 
 
 DEFAULT_NOISY_HOSTS = """google-analytics.com
@@ -242,6 +243,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
         buttons = JPanel()
         buttons.add(JButton("Exportar txt", actionPerformed=self.export_txt))
+        buttons.add(JButton("Exportar JSON", actionPerformed=self.export_json))
         buttons.add(JButton("Limpar", actionPerformed=self.clear_results))
         buttons.add(JButton("Restaurar blacklist", actionPerformed=self.restore_blacklists))
         options.add(buttons)
@@ -404,6 +406,42 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             "Exportacao concluida",
             JOptionPane.INFORMATION_MESSAGE,
         )
+
+    def export_json(self, event):
+        chooser = JFileChooser()
+        chooser.setDialogTitle("Escolha a pasta para salvar wordlists.json")
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY)
+
+        if chooser.showSaveDialog(self.panel) != JFileChooser.APPROVE_OPTION:
+            return
+
+        folder = chooser.getSelectedFile()
+        json_file = File(folder, "wordlists.json")
+
+        data = {
+            "paths": self.unique(self.paths),
+            "full_paths": self.unique(self.full_paths),
+            "parameters": self.unique(self.params),
+        }
+
+        self.write_json_file(json_file, data)
+
+        JOptionPane.showMessageDialog(
+            self.panel,
+            "Arquivo exportado:\nwordlists.json",
+            "Exportacao concluida",
+            JOptionPane.INFORMATION_MESSAGE,
+        )
+
+    def write_json_file(self, file_obj, data):
+        writer = None
+        try:
+            writer = open(file_obj.getAbsolutePath(), "w")
+            writer.write(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True))
+            writer.write("\n")
+        finally:
+            if writer:
+                writer.close()
 
     def clear_results(self, event):
         self.paths = []
