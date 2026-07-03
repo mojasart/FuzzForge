@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 from burp import IBurpExtender, ITab, IHttpListener
 from javax.swing import JPanel, JCheckBox, JTextArea, JScrollPane, JLabel, JButton
-from javax.swing import JFileChooser, JOptionPane, JTabbedPane
+from javax.swing import JFileChooser, JTabbedPane
 from javax.swing import BoxLayout, BorderFactory
 from java.awt import BorderLayout, FlowLayout, Dimension
 from java.net import URLDecoder
@@ -20,7 +21,9 @@ googleapis.com
 facebook.com
 facebook.net
 hotjar.com
-segment.com"""
+segment.com
+static.cloudflareinsights.com
+cloudflareinsights.com"""
 
 DEFAULT_NOISY_SEGMENTS = """cdn-cgi
 rum
@@ -239,22 +242,30 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
         self.only_scope = JCheckBox("Coletar apenas do escopo do Burp Target", False)
         self.extract_js = JCheckBox("Tambem extrair paths reais de JavaScript", False)
-        options.add(self.only_scope)
-        options.add(self.extract_js)
+        self.auto_preview = JCheckBox("Atualizar preview automaticamente", True)
 
-        buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        options.add(self.left_row(self.only_scope))
+        options.add(self.left_row(self.extract_js))
+        options.add(self.left_row(self.auto_preview))
+
+        buttons = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         buttons.add(JButton("Exportar txt", actionPerformed=self.export_txt))
         buttons.add(JButton("Exportar JSON", actionPerformed=self.export_json))
         buttons.add(JButton("Limpar", actionPerformed=self.clear_results))
+        buttons.add(JButton("Atualizar preview", actionPerformed=self.refresh_preview))
         buttons.add(JButton("Restaurar blacklist", actionPerformed=self.restore_blacklists))
         options.add(buttons)
+
+        options_wrapper = JPanel(BorderLayout())
+        options_wrapper.add(options, BorderLayout.NORTH)
+        options_wrapper.setPreferredSize(Dimension(620, 145))
 
         config_tabs = JTabbedPane()
 
         allow_panel, self.host_allowlist = self.text_panel(
             "Manual hosts allowlist, opcional",
             "",
-            "Opcional. Um host por linha.",
+            "Opcional. Um host por linha. Ex: senior.com.br tambem aceita www.senior.com.br e site.senior.com.br.",
         )
         noisy_hosts_panel, self.noisy_hosts_area = self.text_panel(
             "Blacklist hosts",
@@ -264,7 +275,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         noisy_segments_panel, self.noisy_segments_area = self.text_panel(
             "Blacklist segmentos",
             DEFAULT_NOISY_SEGMENTS,
-            "Um segmento por linha. Aceita @* e *texto*.",
+            "Um segmento por linha. Aceita @*, prefixo*, *sufixo e *texto*.",
         )
         noisy_files_panel, self.noisy_files_area = self.text_panel(
             "Blacklist arquivos",
@@ -289,10 +300,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         config_tabs.addTab("Extensoes", noisy_extensions_panel)
         config_tabs.addTab("Parametros", noisy_params_panel)
 
-        options_wrapper = JPanel(BorderLayout())
-        options_wrapper.add(options, BorderLayout.NORTH)
-        options_wrapper.setPreferredSize(Dimension(430, 155))
-
         top.add(options_wrapper, BorderLayout.WEST)
         top.add(config_tabs, BorderLayout.CENTER)
 
@@ -309,6 +316,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
         callbacks.addSuiteTab(self)
         self.render_preview()
+
+    def left_row(self, component):
+        row = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        row.add(component)
+        return row
 
     def getTabCaption(self):
         return "Paths/Parametros"
@@ -330,6 +342,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self.noisy_files_area.setText(DEFAULT_NOISY_FILES)
         self.noisy_extensions_area.setText(DEFAULT_NOISY_EXTENSIONS)
         self.noisy_params_area.setText(DEFAULT_NOISY_PARAMS)
+        self.preview.append("\n[OK] Blacklists restauradas.\n")
 
     def text_items(self, area):
         items = []
@@ -359,7 +372,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if self.has_allowlist() and not self.host_in_allowlist(url):
             return
 
+        before = len(self.paths) + len(self.full_paths) + len(self.params)
+
         self.collect_from_url(url, self.paths, self.full_paths, self.params)
+        self.collect_from_request_body(messageInfo.getRequest(), request_info, self.params)
 
         if not messageIsRequest and self.extract_js.isSelected():
             response = messageInfo.getResponse()
@@ -367,6 +383,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
                 body = self.get_response_body(response)
                 self.collect_from_javascript(body, self.paths, self.full_paths)
 
+        after = len(self.paths) + len(self.full_paths) + len(self.params)
+        if self.auto_preview.isSelected() and after != before:
+            self.render_preview()
+
+    def refresh_preview(self, event):
         self.render_preview()
 
     def render_preview(self):
@@ -406,12 +427,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self.write_text_file(paths_file, "\n".join(merged_paths))
         self.write_text_file(params_file, "\n".join(params))
 
-        JOptionPane.showMessageDialog(
-            self.panel,
-            "Arquivos exportados:\npaths.txt\nparameters.txt",
-            "Exportacao concluida",
-            JOptionPane.INFORMATION_MESSAGE,
-        )
+        self.preview.append("\n\n[OK] Exportado: paths.txt e parameters.txt\n")
 
     def export_json(self, event):
         chooser = JFileChooser()
@@ -431,13 +447,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         }
 
         self.write_json_file(json_file, data)
-
-        JOptionPane.showMessageDialog(
-            self.panel,
-            "Arquivo exportado:\nwordlists.json",
-            "Exportacao concluida",
-            JOptionPane.INFORMATION_MESSAGE,
-        )
+        self.preview.append("\n\n[OK] Exportado: wordlists.json\n")
 
     def write_json_file(self, file_obj, data):
         writer = None
@@ -466,13 +476,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             if writer:
                 writer.close()
 
-    def host_allowed(self, url):
-        raw = self.host_allowlist.getText().strip()
-        if not raw:
-            return True
-
-        return self.host_in_allowlist(url)
-
     def has_allowlist(self):
         return bool(self.host_allowlist.getText().strip())
 
@@ -482,16 +485,12 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             return False
 
         host = (url.getHost() or "").lower()
-        allowed = []
         for line in raw.splitlines():
             item = line.strip().lower()
-            if item:
-                allowed.append(item)
-
-        for item in allowed:
+            if not item:
+                continue
             if host == item or host.endswith("." + item):
                 return True
-
         return False
 
     def is_noisy_host(self, url):
@@ -500,7 +499,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         for noisy_host in self.text_items(self.noisy_hosts_area):
             if host == noisy_host or host.endswith("." + noisy_host):
                 return True
-
         return False
 
     def collect_from_url(self, url, paths, full_paths, params):
@@ -520,7 +518,15 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             if cleaned:
                 paths.append(cleaned)
 
+        self.collect_query_params(raw_query, params)
+
+    def collect_query_params(self, raw_query, params):
+        if not raw_query:
+            return
+
         for pair in raw_query.split("&"):
+            if not pair:
+                continue
             if "=" in pair:
                 key = pair.split("=", 1)[0]
             else:
@@ -529,8 +535,35 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             if key:
                 params.append(key)
 
+    def collect_from_request_body(self, request, request_info, params):
+        try:
+            if not request:
+                return
+            request_string = self.helpers.bytesToString(request)
+            body_offset = request_info.getBodyOffset()
+            body = request_string[body_offset:]
+            if not body:
+                return
+
+            lower_headers = request_string[:body_offset].lower()
+
+            # application/x-www-form-urlencoded ou body simples com a=b&c=d
+            if "application/x-www-form-urlencoded" in lower_headers or re.search(r"(^|&)[A-Za-z_][A-Za-z0-9_\-]{0,80}=", body):
+                for match in re.finditer(r"(^|&)([A-Za-z_][A-Za-z0-9_\-]{0,80})=", body):
+                    key = self.clean_param(match.group(2))
+                    if key:
+                        params.append(key)
+
+            # JSON simples: {"id":1, "file":"x"}
+            if "application/json" in lower_headers or body.strip().startswith("{"):
+                for match in re.finditer(r"\"([A-Za-z_][A-Za-z0-9_\-]{0,80})\"\s*:", body):
+                    key = self.clean_param(match.group(1))
+                    if key:
+                        params.append(key)
+        except:
+            return
+
     def collect_from_javascript(self, body, paths, full_paths):
-        # Captura strings parecidas com paths, como "/api/v1/users".
         candidates = re.findall(r"""['"](/[A-Za-z0-9_\-./{}:]+)['"]""", body)
         for candidate in candidates:
             if self.is_noisy_js_candidate(candidate):
@@ -560,20 +593,17 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if self.is_noisy_segment(value):
             return None
 
-        if not value or "/" in value:
+        if "/" in value:
             return None
 
         return value
 
     def clean_full_path(self, value):
         segments = self.clean_path_segments(value)
-
         if not segments:
             return None
-
         if self.is_noisy_path_segments(segments):
             return None
-
         return self.clean_full_path_from_segments(segments)
 
     def clean_full_path_from_segments(self, segments):
@@ -602,8 +632,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if not raw_segments:
             return []
 
-        # Se a URL termina em arquivo, remove somente o arquivo e preserva
-        # o diretorio onde ele foi encontrado.
+        # Se a URL termina em arquivo, remove somente o arquivo e preserva o diretorio.
         if self.is_file_segment(raw_segments[-1]):
             raw_segments = raw_segments[:-1]
 
@@ -612,24 +641,17 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def clean_param(self, value):
         value = self.decode(value)
         value = value.strip().lstrip("?&").split("=", 1)[0]
+        value = re.sub(r"[^A-Za-z0-9_\-.]", "", value)
         if not value:
             return None
         if self.is_noisy_param(value):
             return None
         return value
 
-    def is_noisy_path(self, value):
-        parts = [part.strip().lower() for part in value.split("/") if part.strip()]
-        if not parts:
-            return True
-
-        return self.is_noisy_path_segments(parts)
-
     def is_noisy_path_segments(self, parts):
         for part in parts:
             if self.is_noisy_segment(part):
                 return True
-
         return False
 
     def is_file_segment(self, value):
@@ -642,7 +664,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def is_noisy_segment(self, value):
         lower = value.lower().strip()
 
-        # Ignora segmentos internos/cache/framework, tipo _next, _nuxt, _cf, etc.
         if lower.startswith("_"):
             return True
 
@@ -664,26 +685,18 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         return False
 
     def is_generated_value(self, lower):
-        # Cache busting/hash de asset, exemplo:
-        # v4513226cdae34746b4dedf0b4dfa099e1781791509496
         if re.match(r"^[a-f0-9]{16,}$", lower):
             return True
         if re.match(r"^v[0-9a-f]{16,}$", lower):
             return True
-
         if re.match(r"^[0-9]+$", lower):
             return True
-
         if len(lower) == 1 and not re.match(r"^v[0-9]$", lower):
             return True
-
         if re.match(r"^[a-z0-9_-]{40,}$", lower):
             return True
-
-        # Build IDs/hashes mistos de frameworks, exemplo mEOna5VIs4fubrAHuEHQO.
         if len(lower) >= 16 and re.match(r"^[a-z0-9_-]+$", lower):
             return True
-
         if "=" in lower:
             return True
 
@@ -696,7 +709,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         for word in noisy_words:
             if word in lower:
                 return True
-
         return False
 
     def matches_pattern(self, value, pattern):
@@ -710,27 +722,20 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
     def is_noisy_js_candidate(self, value):
         lower = value.lower().strip()
-
         if not lower.startswith("/"):
             return True
-
         if "://" in lower or "\\" in lower:
             return True
-
         if "=" in lower or "," in lower:
             return True
-
         if len(lower) > 120:
             return True
-
         parts = [part for part in lower.strip("/").split("/") if part]
         if not parts:
             return True
-
         for part in parts:
             if self.is_noisy_segment(part):
                 return True
-
         return False
 
     def is_noisy_param(self, value):
@@ -754,7 +759,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             if key not in seen:
                 seen.add(key)
                 result.append(value)
-        return result
+        return sorted(result, key=lambda x: x.lower())
 
     def get_response_body(self, response):
         response_info = self.helpers.analyzeResponse(response)
