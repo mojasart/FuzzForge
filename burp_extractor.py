@@ -2,7 +2,7 @@ from burp import IBurpExtender, ITab, IHttpListener
 from javax.swing import JPanel, JCheckBox, JTextArea, JScrollPane, JLabel, JButton
 from javax.swing import JFileChooser, JOptionPane, JTabbedPane
 from javax.swing import BoxLayout, BorderFactory
-from java.awt import BorderLayout
+from java.awt import BorderLayout, FlowLayout, Dimension
 from java.net import URLDecoder
 from java.io import File
 import re
@@ -24,6 +24,11 @@ segment.com"""
 
 DEFAULT_NOISY_SEGMENTS = """cdn-cgi
 rum
+_next
+_nuxt
+_cf
+static
+chunks
 cldr
 globalize
 highcharts
@@ -166,7 +171,6 @@ aip
 z
 family
 display
-id
 cx
 ae
 auid
@@ -187,11 +191,9 @@ guid
 async
 u_w
 u_h
-url
 gclaw_src
 tiba
 hn
-data
 ept
 gcp
 tids
@@ -237,11 +239,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
         self.only_scope = JCheckBox("Coletar apenas do escopo do Burp Target", False)
         self.extract_js = JCheckBox("Tambem extrair paths reais de JavaScript", False)
-
         options.add(self.only_scope)
         options.add(self.extract_js)
 
-        buttons = JPanel()
+        buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
         buttons.add(JButton("Exportar txt", actionPerformed=self.export_txt))
         buttons.add(JButton("Exportar JSON", actionPerformed=self.export_json))
         buttons.add(JButton("Limpar", actionPerformed=self.clear_results))
@@ -288,7 +289,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         config_tabs.addTab("Extensoes", noisy_extensions_panel)
         config_tabs.addTab("Parametros", noisy_params_panel)
 
-        top.add(options, BorderLayout.WEST)
+        options_wrapper = JPanel(BorderLayout())
+        options_wrapper.add(options, BorderLayout.NORTH)
+        options_wrapper.setPreferredSize(Dimension(430, 155))
+
+        top.add(options_wrapper, BorderLayout.WEST)
         top.add(config_tabs, BorderLayout.CENTER)
 
         self.preview = JTextArea()
@@ -345,11 +350,13 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         request_info = self.helpers.analyzeRequest(messageInfo)
         url = request_info.getUrl()
 
+        if self.is_noisy_host(url):
+            return
+
         if self.only_scope.isSelected() and not self.callbacks.isInScope(url) and not self.host_in_allowlist(url):
             return
+
         if self.has_allowlist() and not self.host_in_allowlist(url):
-            return
-        if self.is_noisy_host(url):
             return
 
         self.collect_from_url(url, self.paths, self.full_paths, self.params)
@@ -358,7 +365,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             response = messageInfo.getResponse()
             if response:
                 body = self.get_response_body(response)
-                self.collect_from_javascript(body, self.paths)
+                self.collect_from_javascript(body, self.paths, self.full_paths)
 
         self.render_preview()
 
@@ -379,7 +386,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         output.append("")
         output.append("# parameters.txt")
         output.extend(params)
-
         self.preview.setText("\n".join(output))
 
     def export_txt(self, event):
@@ -523,12 +529,17 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             if key:
                 params.append(key)
 
-    def collect_from_javascript(self, body, paths):
+    def collect_from_javascript(self, body, paths, full_paths):
         # Captura strings parecidas com paths, como "/api/v1/users".
         candidates = re.findall(r"""['"](/[A-Za-z0-9_\-./{}:]+)['"]""", body)
         for candidate in candidates:
             if self.is_noisy_js_candidate(candidate):
                 continue
+
+            full_path = self.clean_full_path(candidate)
+            if full_path:
+                full_paths.append(full_path)
+
             for segment in candidate.split("/"):
                 cleaned = self.clean_path_segment(segment)
                 if cleaned:
@@ -575,10 +586,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if not cleaned_segments:
             return None
 
-        if len(cleaned_segments) < 2:
-            return None
-
-        return "/".join(cleaned_segments)
+        return "/" + "/".join(cleaned_segments)
 
     def clean_path_segments(self, value):
         value = self.decode(value)
@@ -634,6 +642,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def is_noisy_segment(self, value):
         lower = value.lower().strip()
 
+        # Ignora segmentos internos/cache/framework, tipo _next, _nuxt, _cf, etc.
+        if lower.startswith("_"):
+            return True
+
         for pattern in self.text_items(self.noisy_segments_area):
             if self.matches_pattern(lower, pattern):
                 return True
@@ -666,6 +678,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             return True
 
         if re.match(r"^[a-z0-9_-]{40,}$", lower):
+            return True
+
+        # Build IDs/hashes mistos de frameworks, exemplo mEOna5VIs4fubrAHuEHQO.
+        if len(lower) >= 16 and re.match(r"^[a-z0-9_-]+$", lower):
             return True
 
         if "=" in lower:
