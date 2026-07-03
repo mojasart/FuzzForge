@@ -4,10 +4,11 @@ from javax.swing import JPanel, JCheckBox, JTextArea, JScrollPane, JLabel, JButt
 from javax.swing import JFileChooser, JTabbedPane
 from javax.swing import BoxLayout, BorderFactory
 from java.awt import BorderLayout, FlowLayout, Dimension
-from java.net import URLDecoder
+from java.net import URL, URLDecoder
 from java.io import File
 import re
 import json
+import threading
 
 
 DEFAULT_NOISY_HOSTS = """google-analytics.com
@@ -225,12 +226,13 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     def registerExtenderCallbacks(self, callbacks):
         self.callbacks = callbacks
         self.helpers = callbacks.getHelpers()
-        callbacks.setExtensionName("Extrator de Paths e Parametros")
+        callbacks.setExtensionName("FuzzForge")
         callbacks.registerHttpListener(self)
 
         self.paths = []
         self.full_paths = []
         self.params = []
+        self.state_lock = threading.RLock()
 
         self.panel = JPanel(BorderLayout())
 
@@ -242,23 +244,19 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
         self.only_scope = JCheckBox("Coletar apenas do escopo do Burp Target", False)
         self.extract_js = JCheckBox("Tambem extrair paths reais de JavaScript", False)
-        self.auto_preview = JCheckBox("Atualizar preview automaticamente", True)
-
         options.add(self.left_row(self.only_scope))
         options.add(self.left_row(self.extract_js))
-        options.add(self.left_row(self.auto_preview))
 
         buttons = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         buttons.add(JButton("Exportar txt", actionPerformed=self.export_txt))
         buttons.add(JButton("Exportar JSON", actionPerformed=self.export_json))
         buttons.add(JButton("Limpar", actionPerformed=self.clear_results))
-        buttons.add(JButton("Atualizar preview", actionPerformed=self.refresh_preview))
         buttons.add(JButton("Restaurar blacklist", actionPerformed=self.restore_blacklists))
         options.add(buttons)
 
         options_wrapper = JPanel(BorderLayout())
         options_wrapper.add(options, BorderLayout.NORTH)
-        options_wrapper.setPreferredSize(Dimension(620, 145))
+        options_wrapper.setPreferredSize(Dimension(620, 120))
 
         config_tabs = JTabbedPane()
 
@@ -323,7 +321,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         return row
 
     def getTabCaption(self):
-        return "Paths/Parametros"
+        return "FuzzForge"
 
     def getUiComponent(self):
         return self.panel
@@ -363,40 +361,64 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         request_info = self.helpers.analyzeRequest(messageInfo)
         url = request_info.getUrl()
 
-        if self.is_noisy_host(url):
+        if not self.url_allowed(url):
             return
 
-        if self.only_scope.isSelected() and not self.callbacks.isInScope(url) and not self.host_in_allowlist(url):
-            return
+        changed = False
 
-        if self.has_allowlist() and not self.host_in_allowlist(url):
-            return
+        if messageIsRequest:
+            with self.state_lock:
+                before = len(self.paths) + len(self.full_paths) + len(self.params)
 
-        before = len(self.paths) + len(self.full_paths) + len(self.params)
+                # O foco da extensão é GET:
+                # path real da URL + nomes dos parâmetros depois de "?".
+                method = (request_info.getMethod() or "").upper()
+                if method == "GET":
+                    self.collect_from_url(
+                        url,
+                        self.paths,
+                        self.full_paths,
+                        self.params
+                    )
 
-        self.collect_from_url(url, self.paths, self.full_paths, self.params)
-        self.collect_from_request_body(messageInfo.getRequest(), request_info, self.params)
+                # Em SPAs a barra do navegador pode mudar sem existir um novo
+                # GET do documento. Nesse caso, requests seguintes normalmente
+                # carregam o endereço atual no Referer. Coletamos esse path também.
+                self.collect_from_referer(
+                    request_info,
+                    self.paths,
+                    self.full_paths,
+                    self.params
+                )
 
-        if not messageIsRequest and self.extract_js.isSelected():
+                after = len(self.paths) + len(self.full_paths) + len(self.params)
+                changed = after != before
+
+        elif self.extract_js.isSelected():
             response = messageInfo.getResponse()
             if response:
                 body = self.get_response_body(response)
-                self.collect_from_javascript(body, self.paths, self.full_paths)
+                with self.state_lock:
+                    before = len(self.paths) + len(self.full_paths)
+                    self.collect_from_javascript(
+                        body,
+                        self.paths,
+                        self.full_paths
+                    )
+                    after = len(self.paths) + len(self.full_paths)
+                    changed = after != before
 
-        after = len(self.paths) + len(self.full_paths) + len(self.params)
-        if self.auto_preview.isSelected() and after != before:
+        if changed:
             self.render_preview()
 
-    def refresh_preview(self, event):
-        self.render_preview()
-
     def render_preview(self):
-        paths = self.unique(self.paths)
-        full_paths = self.unique(self.full_paths)
-        params = self.unique(self.params)
-        self.paths = paths
-        self.full_paths = full_paths
-        self.params = params
+        # O preview só lê um snapshot.
+        # Ele não reatribui self.paths/self.full_paths/self.params,
+        # então não consegue apagar um GET coletado por outra callback.
+        with self.state_lock:
+            paths = self.unique(list(self.paths))
+            full_paths = self.unique(list(self.full_paths))
+            params = self.unique(list(self.params))
 
         output = []
         output.append("# paths.txt")
@@ -421,8 +443,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         paths_file = File(folder, "paths.txt")
         params_file = File(folder, "parameters.txt")
 
-        merged_paths = self.unique(self.paths + self.full_paths)
-        params = self.unique(self.params)
+        with self.state_lock:
+            merged_paths = self.unique(list(self.paths) + list(self.full_paths))
+            params = self.unique(list(self.params))
 
         self.write_text_file(paths_file, "\n".join(merged_paths))
         self.write_text_file(params_file, "\n".join(params))
@@ -440,11 +463,12 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         folder = chooser.getSelectedFile()
         json_file = File(folder, "wordlists.json")
 
-        data = {
-            "paths": self.unique(self.paths),
-            "full_paths": self.unique(self.full_paths),
-            "parameters": self.unique(self.params),
-        }
+        with self.state_lock:
+            data = {
+                "paths": self.unique(list(self.paths)),
+                "full_paths": self.unique(list(self.full_paths)),
+                "parameters": self.unique(list(self.params)),
+            }
 
         self.write_json_file(json_file, data)
         self.preview.append("\n\n[OK] Exportado: wordlists.json\n")
@@ -460,9 +484,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
                 writer.close()
 
     def clear_results(self, event):
-        self.paths = []
-        self.full_paths = []
-        self.params = []
+        with self.state_lock:
+            self.paths = []
+            self.full_paths = []
+            self.params = []
         self.render_preview()
 
     def write_text_file(self, file_obj, text):
@@ -501,6 +526,56 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
                 return True
         return False
 
+    def url_allowed(self, url):
+        if url is None:
+            return False
+
+        if self.is_noisy_host(url):
+            return False
+
+        if self.only_scope.isSelected():
+            if self.callbacks.isInScope(url):
+                return True
+            if self.host_in_allowlist(url):
+                return True
+            return False
+
+        if self.has_allowlist():
+            return self.host_in_allowlist(url)
+
+        return True
+
+    def collect_from_referer(self, request_info, paths, full_paths, params):
+        try:
+            headers = request_info.getHeaders()
+            for header in headers:
+                lower = header.lower()
+
+                if not (
+                    lower.startswith("referer:")
+                    or lower.startswith("referrer:")
+                ):
+                    continue
+
+                raw = header.split(":", 1)[1].strip()
+                if not raw:
+                    return
+
+                referer_url = URL(raw)
+
+                if not self.url_allowed(referer_url):
+                    return
+
+                self.collect_from_url(
+                    referer_url,
+                    paths,
+                    full_paths,
+                    params
+                )
+                return
+        except:
+            return
+
     def collect_from_url(self, url, paths, full_paths, params):
         raw_path = url.getPath() or ""
         raw_query = url.getQuery() or ""
@@ -536,32 +611,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
                 params.append(key)
 
     def collect_from_request_body(self, request, request_info, params):
-        try:
-            if not request:
-                return
-            request_string = self.helpers.bytesToString(request)
-            body_offset = request_info.getBodyOffset()
-            body = request_string[body_offset:]
-            if not body:
-                return
-
-            lower_headers = request_string[:body_offset].lower()
-
-            # application/x-www-form-urlencoded ou body simples com a=b&c=d
-            if "application/x-www-form-urlencoded" in lower_headers or re.search(r"(^|&)[A-Za-z_][A-Za-z0-9_\-]{0,80}=", body):
-                for match in re.finditer(r"(^|&)([A-Za-z_][A-Za-z0-9_\-]{0,80})=", body):
-                    key = self.clean_param(match.group(2))
-                    if key:
-                        params.append(key)
-
-            # JSON simples: {"id":1, "file":"x"}
-            if "application/json" in lower_headers or body.strip().startswith("{"):
-                for match in re.finditer(r"\"([A-Za-z_][A-Za-z0-9_\-]{0,80})\"\s*:", body):
-                    key = self.clean_param(match.group(1))
-                    if key:
-                        params.append(key)
-        except:
-            return
+        # Intencionalmente desativado.
+        # Parameters.txt recebe apenas parâmetros reais da query string (?id=1&x=2).
+        return
 
     def collect_from_javascript(self, body, paths, full_paths):
         candidates = re.findall(r"""['"](/[A-Za-z0-9_\-./{}:]+)['"]""", body)
@@ -685,18 +737,34 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         return False
 
     def is_generated_value(self, lower):
+        # Só remove formatos com sinal forte de valor gerado.
+        # NÃO usa mais comprimento puro, porque isso apagava slugs reais como:
+        # higiene-e-perfumaria
+        # canais-de-distribuicao
+
+        # Hash hexadecimal.
         if re.match(r"^[a-f0-9]{16,}$", lower):
             return True
+
+        # Cache-buster no formato v + hash hexadecimal.
         if re.match(r"^v[0-9a-f]{16,}$", lower):
             return True
+
+        # UUID.
+        if re.match(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            lower,
+        ):
+            return True
+
+        # IDs puramente numéricos.
         if re.match(r"^[0-9]+$", lower):
             return True
-        if len(lower) == 1 and not re.match(r"^v[0-9]$", lower):
-            return True
-        if re.match(r"^[a-z0-9_-]{40,}$", lower):
-            return True
-        if len(lower) >= 16 and re.match(r"^[a-z0-9_-]+$", lower):
-            return True
+
+        # Não filtra mais pelo tamanho.
+        # Slugs, nomes de parâmetros e segmentos longos são mantidos.
+
         if "=" in lower:
             return True
 
@@ -709,6 +777,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         for word in noisy_words:
             if word in lower:
                 return True
+
         return False
 
     def matches_pattern(self, value, pattern):
@@ -727,8 +796,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if "://" in lower or "\\" in lower:
             return True
         if "=" in lower or "," in lower:
-            return True
-        if len(lower) > 120:
             return True
         parts = [part for part in lower.strip("/").split("/") if part]
         if not parts:
