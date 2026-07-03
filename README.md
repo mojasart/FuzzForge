@@ -1,324 +1,263 @@
-# Burp Paths/Parametros Extractor
+# FuzzForge
 
 Fala crias.
 
-Essa extensao para Burp Suite coleta paths e parametros das requisicoes que passam pelo Burp e mostra tudo em uma aba propria.
+**FuzzForge** é uma extensão para Burp Suite que cria wordlists específicas para cada alvo a partir dos paths e parâmetros reais observados durante a navegação.
 
-Ela foi feita para ajudar a montar wordlists rapidamente durante recon, fuzzing e testes manuais.
+A ideia surgiu de um problema simples: wordlists genéricas, muitas vezes focadas em inglês, podem não encontrar palavras específicas da aplicação, do idioma ou do contexto do negócio.
 
-Na tela, ela separa:
+Exemplo:
+
+```text
+GET /institucional/canais-de-distribuicao?id=12
+```
+
+A extensão coleta:
 
 ```text
 # paths.txt
-solucoes
-verejos
+institucional
+canais-de-distribuicao
 
 # full_paths.txt
-solucoes/verejos
+/institucional/canais-de-distribuicao
 
 # parameters.txt
-ver
 id
 ```
 
-Na hora de exportar, ela gera dois arquivos:
-
-```text
-paths.txt
-parameters.txt
-```
-
-O `paths.txt` exportado junta os valores de `paths` e `full_paths`.
-
-O `parameters.txt` exportado salva os parametros encontrados.
+Na exportação TXT, `paths` e `full_paths` são unidos em `paths.txt`. Os parâmetros vão para `parameters.txt`.
 
 ---
 
 ## Requisitos
 
-Voce precisa ter:
+- Burp Suite
+- Java
+- Jython standalone
 
-* Burp Suite
-* Java funcionando
-* Jython standalone `.jar`
-
-Burp nao usa o Python normal da maquina para rodar extensoes Python. Ele usa Jython.
-
----
-
-## Baixar o Jython
-
-Baixe o Jython standalone:
+Baixe o Jython:
 
 ```bash
 curl -L -o jython-standalone-2.7.4.jar https://repo1.maven.org/maven2/org/python/jython-standalone/2.7.4/jython-standalone-2.7.4.jar
 ```
 
-No Windows PowerShell:
-
-```powershell
-Invoke-WebRequest -Uri "https://repo1.maven.org/maven2/org/python/jython-standalone/2.7.4/jython-standalone-2.7.4.jar" -OutFile "jython-standalone-2.7.4.jar"
-```
-
-Sugestao de pasta no Windows:
+No Burp:
 
 ```text
-C:\Tools\jython\jython-standalone-2.7.4.jar
+Settings
+> Extensions
+> Core extension settings
+> Python environment
 ```
 
----
-
-## Configurar Python no Burp
-
-Se voce nunca usou extensao Python no Burp, precisa configurar o Jython.
-
-1. Abra o Burp Suite.
-2. Va em `Settings`.
-3. Procure por `Extensions`.
-4. Entre em `Core extension settings`.
-5. Ache `Python environment`.
-6. Em `Location of Jython standalone JAR file`, selecione o arquivo:
+Selecione o arquivo:
 
 ```text
 jython-standalone-2.7.4.jar
 ```
 
-Depois disso, o Burp vai conseguir carregar extensoes Python.
-
 ---
 
-## Instalar a extensao
+## Instalar a extensão
 
-1. Abra o Burp Suite.
-2. Va em `Extensions`.
-3. Clique em `Add`.
-4. Em `Extension type`, selecione `Python`.
-5. Em `Extension file`, selecione o arquivo `.py` deste repositorio.
-6. Clique em `Next`.
-
-Se tudo estiver certo, vai aparecer uma nova aba:
+No Burp:
 
 ```text
-Paths/Parametros
+Extensions
+> Installed
+> Add
 ```
+
+Escolha:
+
+```text
+Extension type: Python
+Extension file: fuzzforge.py
+```
+
+Depois disso, a aba **FuzzForge** aparecerá no Burp.
 
 ---
 
 ## Como usar
 
-A extensao coleta automaticamente requests novos que passam pelo Burp.
+A extensão coleta automaticamente requests que passam por:
 
-Ela escuta:
+- Proxy
+- Target
+- Repeater
 
-* Proxy
-* Target
-* Repeater
-
-Entao, se voce mandar uma request para o Repeater e executar, ela tambem coleta os paths e parametros dessa request.
-
----
-
-## Opcoes
-
-### Coletar apenas do escopo do Burp Target
-
-Quando marcado, a extensao so coleta requests que estiverem dentro do escopo configurado no Burp Target.
-
-### Tambem extrair paths reais de JavaScript
-
-Quando marcado, a extensao tenta encontrar paths dentro de respostas JavaScript.
-
-Essa opcao pode trazer mais coisa do que o esperado dependendo do alvo, entao use quando fizer sentido.
-
-### Manual hosts allowlist
-
-Voce tambem pode colocar hosts manualmente na area de allowlist.
-
-Um host por linha:
-
-```text
-example.com
-api.example.com
-```
-
-Isso ajuda quando voce nao quer ou nao pode configurar tudo no Burp Target Scope.
-
----
-
-## Preview
-
-Na tela, a extensao mostra:
+Ela separa os resultados em:
 
 ```text
 # paths.txt
-setor
-verejo
+intranet
+usuarios
+perfil
 
 # full_paths.txt
-setor/verejo
+/intranet/usuarios/perfil
 
 # parameters.txt
-ver
+id
+page
+search
 ```
-
-O preview fica separado para facilitar a visualizacao.
-
----
-
-## Exportar txt
-
-O botao `Exportar txt` pede uma pasta e salva dois arquivos:
-
-```text
-paths.txt
-parameters.txt
-```
-
-O `paths.txt` exportado junta:
-
-* `paths`
-* `full_paths`
 
 Exemplo:
 
 ```text
-setor
-verejo
-setor/verejo
+/intranet/usuarios/perfil?id=10&page=2
 ```
 
-O `parameters.txt` exportado salva os parametros:
+gera:
 
 ```text
-ver
+intranet
+usuarios
+perfil
+/intranet/usuarios/perfil
 id
-tipo
+page
 ```
+
+Os valores dos parâmetros não são salvos.
 
 ---
 
-## Exportar JSON
+## Allowlist
 
-O botao `Exportar JSON` pede uma pasta e salva um arquivo:
+Você pode limitar a coleta a hosts específicos.
+
+Exemplo:
 
 ```text
-wordlists.json
+example.com
 ```
 
-Esse arquivo junta tudo que a extensao coletou em um unico JSON estruturado, com as mesmas listas do preview:
+Também aceita subdomínios automaticamente:
 
-```json
-{
-  "full_paths": [
-    "setor/verejo"
-  ],
-  "paths": [
-    "setor",
-    "verejo"
-  ],
-  "parameters": [
-    "ver",
-    "id",
-    "tipo"
-  ]
-}
+```text
+api.example.com
+login.example.com
+portal.example.com
 ```
 
-Use esse formato quando quiser importar os resultados em outra ferramenta ou script, em vez de ler os `.txt` linha por linha.
-
-O `Exportar JSON` nao substitui o `Exportar txt`: sao dois botoes independentes, entao voce pode gerar os dois formatos a partir da mesma coleta.
+Isso ajuda a evitar que a extensão colete lixo de sites, trackers e serviços externos.
 
 ---
 
-## Limpar
+## Opções
 
-O botao `Limpar` apaga tudo que foi coletado na aba atual.
+### Coletar apenas do escopo do Burp Target
 
-Use ele quando trocar de alvo ou quando quiser remover lixo antigo da tela.
+Coleta apenas requests dentro do scope configurado no Burp, além dos hosts da allowlist manual.
+
+### Extrair paths de JavaScript
+
+Procura strings que parecem paths dentro de respostas JavaScript.
+
+Pode revelar rotas que não apareceram diretamente durante a navegação, mas também pode gerar mais ruído. Por isso, use quando fizer sentido.
 
 ---
 
 ## Filtros
 
-A extensao ja filtra por padrao varias coisas que normalmente poluem a lista, como:
+A extensão filtra por padrão coisas que normalmente poluem a wordlist:
 
-* arquivos `.css`, `.js`, `.png`, `.ico`
-* paths de tracking
-* parametros `utm_*`
-* parametros de Google Ads/Analytics
-* hosts comuns de tracking, como Google Analytics, Google Tag Manager e DoubleClick
+- assets como `.js`, `.css`, `.png`, `.ico`
+- hosts de analytics e tracking
+- segmentos de frameworks
+- hashes e build IDs
+- parâmetros como `utm_*`, `gclid` e `fbclid`
 
-Esses filtros rodam por padrao, mas podem ser editados pela interface.
-
-Na parte de configuracao existem abas de blacklist:
-
-* `Hosts`
-* `Segmentos`
-* `Arquivos`
-* `Extensoes`
-* `Parametros`
-
-Se voce quiser deixar de filtrar alguma coisa, remova da blacklist correspondente.
-
-Exemplo:
-
-Se quiser que arquivos `.7z` sejam considerados paths validos, remova:
+Os filtros podem ser alterados nas abas:
 
 ```text
-.7z
+Hosts
+Segmentos
+Arquivos
+Extensões
+Parâmetros
 ```
 
-da aba `Extensoes`.
-
-Se quiser deixar `/wp-content` aparecer, remova:
-
-```text
-wp-content
-```
-
-da aba `Segmentos`.
-
-O botao `Restaurar blacklist` volta os filtros para o padrao da extensao.
-
-Para evitar poluicao, prefira definir o host:
-
-* pelo Burp Target Scope; ou
-* pela allowlist manual da extensao.
+O botão `Restaurar blacklist` volta os filtros para o padrão.
 
 ---
 
-## Observacoes
+## Exportar
 
-Ela ainda esta meio paia e precisa de uso real pra melhorar.
+### TXT
 
-A ideia e ir ajustando os filtros conforme aparecerem casos novos.
-
-Se vier lixo demais, tente:
-
-* clicar em `Limpar`;
-* deixar a extracao de JavaScript desmarcada;
-* configurar o Burp Target Scope;
-* usar a allowlist manual com o host do alvo.
-
----
-
-## Arquivos gerados
-
-Ao exportar:
+Gera:
 
 ```text
 paths.txt
 parameters.txt
 ```
 
-O arquivo `paths.txt` serve para wordlist de rotas.
+`paths.txt` junta os segmentos e os caminhos completos.
 
-O arquivo `parameters.txt` serve para wordlist de parametros.
+`parameters.txt` salva os nomes dos parâmetros encontrados.
+
+### JSON
+
+Gera:
+
+```text
+wordlists.json
+```
+
+com os grupos separados:
+
+```json
+{
+  "paths": ["intranet", "usuarios"],
+  "full_paths": ["/intranet/usuarios"],
+  "parameters": ["id", "page"]
+}
+```
 
 ---
 
-## Status
+## Limpar
 
-Extensao local para uso em Burp Suite.
+O botão `Limpar` apaga tudo que foi coletado na sessão atual.
 
-Ainda nao e uma extensao pronta para Burp BApp Store.
+Use quando trocar de alvo ou quiser começar uma coleta nova.
+
+---
+
+## Por que usar?
+
+Uma wordlist genérica pode ter:
+
+```text
+users
+account
+settings
+admin
+```
+
+Mas uma aplicação real pode usar:
+
+```text
+colaborador
+solicitacao
+atualizacao-cadastral
+canais-de-distribuicao
+planejamento
+```
+
+O objetivo do FuzzForge é aproveitar o vocabulário real do alvo para complementar wordlists genéricas durante fuzzing, recon e testes manuais.
+
+---
+
+## Estado atual
+
+Ela ainda está meio paia e precisa de uso real pra melhorar.
+
+Os filtros estão sendo ajustados conforme aparecem novos casos de ruído, frameworks, trackers e estruturas diferentes de aplicações.
+
+Ainda não é uma extensão pronta para a Burp BApp Store.
