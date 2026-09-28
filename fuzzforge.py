@@ -108,9 +108,7 @@ DEFAULT_NOISY_EXTENSIONS = """.css
 .zip
 .rar
 .7z
-.webmanifest
-.xml
-.json"""
+.webmanifest"""
 
 DEFAULT_NOISY_PARAMS = """v
 _
@@ -370,16 +368,12 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             with self.state_lock:
                 before = len(self.paths) + len(self.full_paths) + len(self.params)
 
-                # O foco da extensão é GET:
-                # path real da URL + nomes dos parâmetros depois de "?".
-                method = (request_info.getMethod() or "").upper()
-                if method == "GET":
-                    self.collect_from_url(
-                        url,
-                        self.paths,
-                        self.full_paths,
-                        self.params
-                    )
+                self.collect_from_url(
+                    url,
+                    self.paths,
+                    self.full_paths,
+                    self.params
+                )
 
                 # Em SPAs a barra do navegador pode mudar sem existir um novo
                 # GET do documento. Nesse caso, requests seguintes normalmente
@@ -633,6 +627,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         value = value.strip("/")
         value = value.split("?", 1)[0]
         value = value.split("#", 1)[0]
+        value = value.split(";", 1)[0]
         value = value.strip("{}[]()")
         value = value.strip()
 
