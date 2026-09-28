@@ -581,9 +581,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         raw_query = url.getQuery() or ""
         path_segments = self.clean_path_segments(raw_path)
 
-        if self.is_noisy_path_segments(path_segments):
-            path_segments = []
-
         full_path = self.clean_full_path_from_segments(path_segments)
         if full_path:
             full_paths.append(full_path)
@@ -654,8 +651,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         segments = self.clean_path_segments(value)
         if not segments:
             return None
-        if self.is_noisy_path_segments(segments):
-            return None
         return self.clean_full_path_from_segments(segments)
 
     def clean_full_path_from_segments(self, segments):
@@ -684,9 +679,12 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         if not raw_segments:
             return []
 
-        # Se a URL termina em arquivo, remove somente o arquivo e preserva o diretorio.
         if self.is_file_segment(raw_segments[-1]):
-            raw_segments = raw_segments[:-1]
+            base = raw_segments[-1].rsplit(".", 1)[0]
+            if base:
+                raw_segments[-1] = base
+            else:
+                raw_segments = raw_segments[:-1]
 
         return raw_segments
 
@@ -700,12 +698,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             return None
         return value
 
-    def is_noisy_path_segments(self, parts):
-        for part in parts:
-            if self.is_noisy_segment(part):
-                return True
-        return False
-
     def is_file_segment(self, value):
         lower = value.lower().strip()
         for ext in self.text_items(self.noisy_extensions_area):
@@ -715,9 +707,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
 
     def is_noisy_segment(self, value):
         lower = value.lower().strip()
-
-        if lower.startswith("_"):
-            return True
 
         for pattern in self.text_items(self.noisy_segments_area):
             if self.matches_pattern(lower, pattern):
@@ -769,10 +758,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             return True
 
         noisy_words = [
-            "google", "gstatic", "googletagmanager", "googleapis",
+            "gstatic", "googletagmanager", "googleapis",
             "google-analytics", "doubleclick", "onegoogle",
-            "asyncdataservice", "recaptcha", "facebook", "hotjar",
-            "segment", "telemetry", "analytics", "tracking",
+            "asyncdataservice", "recaptcha", "hotjar",
         ]
         for word in noisy_words:
             if word in lower:
@@ -800,9 +788,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         parts = [part for part in lower.strip("/").split("/") if part]
         if not parts:
             return True
-        for part in parts:
-            if self.is_noisy_segment(part):
-                return True
         return False
 
     def is_noisy_param(self, value):
